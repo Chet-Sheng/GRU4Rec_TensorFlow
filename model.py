@@ -10,7 +10,7 @@ import pandas as pd
 import numpy as np
 
 class GRU4Rec:
-    
+
     def __init__(self, sess, args):
         self.sess = sess
         self.is_training = args.is_training
@@ -30,7 +30,7 @@ class GRU4Rec:
         self.item_key = args.item_key
         self.time_key = args.time_key
         self.grad_cap = args.grad_cap
-        self.n_items = args.n_items 
+        self.n_items = args.n_items
         if args.hidden_act == 'tanh':
             self.hidden_act = self.tanh
         elif args.hidden_act == 'relu':
@@ -74,7 +74,7 @@ class GRU4Rec:
         if self.is_training:
             return
 
-        # use self.predict_state to hold hidden states during prediction. 
+        # use self.predict_state to hold hidden states during prediction.
         self.predict_state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in xrange(self.layers)]
         ckpt = tf.train.get_checkpoint_state(self.checkpoint_dir)
         if ckpt and ckpt.model_checkpoint_path:
@@ -107,7 +107,7 @@ class GRU4Rec:
         return tf.reduce_mean(term1 - term2)
 
     def build_model(self):
-        
+
         self.X = tf.placeholder(tf.int32, [self.batch_size], name='input')
         self.Y = tf.placeholder(tf.int32, [self.batch_size], name='output')
         self.state = [tf.placeholder(tf.float32, [self.batch_size, self.rnn_size], name='rnn_state') for _ in xrange(self.layers)]
@@ -126,7 +126,7 @@ class GRU4Rec:
             cell = rnn_cell.GRUCell(self.rnn_size, activation=self.hidden_act)
             drop_cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.dropout_p_hidden)
             stacked_cell = rnn_cell.MultiRNNCell([drop_cell] * self.layers)
-            
+
             inputs = tf.nn.embedding_lookup(embedding, self.X)
             output, state = stacked_cell(inputs, tuple(self.state))
             self.final_state = state
@@ -147,8 +147,8 @@ class GRU4Rec:
         if not self.is_training:
             return
 
-        self.lr = tf.maximum(1e-5,tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps, self.decay, staircase=True)) 
-        
+        self.lr = tf.maximum(1e-5,tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps, self.decay, staircase=True))
+
         '''
         Try different optimizers.
         '''
@@ -159,10 +159,11 @@ class GRU4Rec:
 
         tvars = tf.trainable_variables()
         gvs = optimizer.compute_gradients(self.cost, tvars)
+        # gradient clipping:
         if self.grad_cap > 0:
             capped_gvs = [(tf.clip_by_norm(grad, self.grad_cap), var) for grad, var in gvs]
         else:
-            capped_gvs = gvs 
+            capped_gvs = gvs
         self.train_op = optimizer.apply_gradients(capped_gvs, global_step=self.global_step)
 
     def init(self, data):
@@ -170,7 +171,7 @@ class GRU4Rec:
         offset_sessions = np.zeros(data[self.session_key].nunique()+1, dtype=np.int32)
         offset_sessions[1:] = data.groupby(self.session_key).size().cumsum()
         return offset_sessions
-    
+
     def fit(self, data):
         self.error_during_train = False
         itemids = data[self.item_key].unique()
@@ -197,9 +198,9 @@ class GRU4Rec:
                     # prepare inputs, targeted outputs and hidden states
                     fetches = [self.cost, self.final_state, self.global_step, self.lr, self.train_op]
                     feed_dict = {self.X: in_idx, self.Y: out_idx}
-                    for j in xrange(self.layers): 
+                    for j in xrange(self.layers):
                         feed_dict[self.state[j]] = state[j]
-                    
+
                     cost, state, step, lr, _ = self.sess.run(fetches, feed_dict)
                     epoch_cost.append(cost)
                     if np.isnan(cost):
@@ -222,14 +223,14 @@ class GRU4Rec:
                 if len(mask) and self.reset_after_session:
                     for i in xrange(self.layers):
                         state[i][mask] = 0
-            
+
             avgc = np.mean(epoch_cost)
             if np.isnan(avgc):
                 print('Epoch {}: Nan error!'.format(epoch, avgc))
                 self.error_during_train = True
                 return
             self.saver.save(self.sess, '{}/gru-model'.format(self.checkpoint_dir), global_step=epoch)
-    
+
     def predict_next_batch(self, session_ids, input_item_ids, itemidmap, batch=50):
         '''
         Gives predicton scores for a selected set of items. Can be used in batch mode to predict for multiple independent events (i.e. events of different sessions) at once and thus speed up evaluation.
@@ -256,9 +257,9 @@ class GRU4Rec:
         if batch != self.batch_size:
             raise Exception('Predict batch size({}) must match train batch size({})'.format(batch, self.batch_size))
         if not self.predict:
-            self.current_session = np.ones(batch) * -1 
+            self.current_session = np.ones(batch) * -1
             self.predict = True
-        
+
         session_change = np.arange(batch)[session_ids != self.current_session]
         if len(session_change) > 0: # change internal states with session changes
             for i in xrange(self.layers):
@@ -273,4 +274,3 @@ class GRU4Rec:
         preds, self.predict_state = self.sess.run(fetches, feed_dict)
         preds = np.asarray(preds).T
         return pd.DataFrame(data=preds, index=itemidmap.index)
-
