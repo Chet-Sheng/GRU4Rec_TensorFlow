@@ -134,6 +134,8 @@ class GRU4Rec:
         if self.is_training:
             '''
             Use other examples of the minibatch as negative samples.
+            by default, it is using sampled softmaxself.
+            How is NCE Loss?
             '''
             sampled_W = tf.nn.embedding_lookup(softmax_W, self.Y)
             sampled_b = tf.nn.embedding_lookup(softmax_b, self.Y)
@@ -178,23 +180,25 @@ class GRU4Rec:
         self.n_items = len(itemids)
         self.itemidmap = pd.Series(data=np.arange(self.n_items), index=itemids)
         data = pd.merge(data, pd.DataFrame({self.item_key:itemids, 'ItemIdx':self.itemidmap[itemids].values}), on=self.item_key, how='inner')
-        offset_sessions = self.init(data)
+        offset_sessions = self.init(data) # this is a list
         print('fitting model...')
         for epoch in xrange(self.n_epochs):
             epoch_cost = []
             state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in xrange(self.layers)]
-            session_idx_arr = np.arange(len(offset_sessions)-1)
-            iters = np.arange(self.batch_size)
+            session_idx_arr = np.arange(len(offset_sessions)-1) # array([0,1,2,3,4,..., num_sessions])
+            iters = np.arange(self.batch_size) # array([0,1,2,3,..., batch_size])
             maxiter = iters.max()
-            start = offset_sessions[session_idx_arr[iters]]
-            end = offset_sessions[session_idx_arr[iters]+1]
+            # start and end is for indexing data.
+            start = offset_sessions[session_idx_arr[iters]]  # start is just an array
+            end = offset_sessions[session_idx_arr[iters]+1]  # end is also an array
             finished = False
             while not finished:
-                minlen = (end-start).min()
-                out_idx = data.ItemIdx.values[start]
-                for i in range(minlen-1):
+                minlen = (end-start).min()  # session with minimal timestep (minimal timestep)
+                out_idx = data.ItemIdx.values[start] # find start index of each session.
+                for i in range(minlen-1): # because the first index has already taken above.
                     in_idx = out_idx
-                    out_idx = data.ItemIdx.values[start+i+1]
+                    out_idx = data.ItemIdx.values[start+i+1] # this makes sure that all of these are in same session
+
                     # prepare inputs, targeted outputs and hidden states
                     fetches = [self.cost, self.final_state, self.global_step, self.lr, self.train_op]
                     feed_dict = {self.X: in_idx, self.Y: out_idx}
