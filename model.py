@@ -248,6 +248,8 @@ class GRU4Rec:
                     start[idx] = offset_sessions[session_idx_arr[maxiter]]
                     # Updata end
                     end[idx] = offset_sessions[session_idx_arr[maxiter]+1]
+
+                # this step is key! rnn关键在于是否保留memory, 除非memory清0，不然还算是一个sequence.
                 if len(mask) and self.reset_after_session:
                     for i in xrange(self.layers):
                         state[i][mask] = 0
