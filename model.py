@@ -119,9 +119,13 @@ class GRU4Rec:
                 initializer = tf.random_normal_initializer(mean=0, stddev=sigma)
             else:
                 initializer = tf.random_uniform_initializer(minval=-sigma, maxval=sigma)
-            embedding = tf.get_variable('embedding', [self.n_items, self.rnn_size], initializer=initializer)
-            softmax_W = tf.get_variable('softmax_w', [self.n_items, self.rnn_size], initializer=initializer)
-            softmax_b = tf.get_variable('softmax_b', [self.n_items], initializer=tf.constant_initializer(0.0))
+
+            # [FIXME] Am I looking at LSTM to change GRU?... fuck!
+            # here embedding layer dont have to be same as rnn_size. It can be arbitrary. There's no bug here. but it is not correct
+            embedding = tf.get_variable('embedding', [self.n_items, self.rnn_size], initializer=initializer) # (n_items, dim_feat)
+            # this guy is really doing softmax... not sampled one...
+            softmax_W = tf.get_variable('softmax_w', [self.n_items, self.rnn_size], initializer=initializer) # n_items??... wrong!!! (n_y, rnn_size)
+            softmax_b = tf.get_variable('softmax_b', [self.n_items], initializer=tf.constant_initializer(0.0)) # (n_y)
 
             cell = rnn_cell.GRUCell(self.rnn_size, activation=self.hidden_act)
             drop_cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.dropout_p_hidden)
@@ -134,9 +138,10 @@ class GRU4Rec:
         if self.is_training:
             '''
             Use other examples of the minibatch as negative samples.
-            by default, it is using sampled softmaxself.
+            by default, it is using sampled softmax.
             How is NCE Loss?
             '''
+            #[HACK] is this efficient? will softmax_W all be calculated?
             sampled_W = tf.nn.embedding_lookup(softmax_W, self.Y)
             sampled_b = tf.nn.embedding_lookup(softmax_b, self.Y)
             logits = tf.matmul(output, sampled_W, transpose_b=True) + sampled_b
@@ -171,7 +176,7 @@ class GRU4Rec:
     def init(self, data):
         data.sort([self.session_key, self.time_key], inplace=True)
         offset_sessions = np.zeros(data[self.session_key].nunique()+1, dtype=np.int32)
-        offset_sessions[1:] = data.groupby(self.session_key).size().cumsum()
+        offset_sessions[1:] = data.groupby(self.session_key).size().cumsum() # num_sessions=len(offset_sessions)-1
         return offset_sessions
 
     def fit(self, data):
@@ -179,31 +184,42 @@ class GRU4Rec:
         itemids = data[self.item_key].unique()
         self.n_items = len(itemids)
         self.itemidmap = pd.Series(data=np.arange(self.n_items), index=itemids)
+        # append an item_id column to data
         data = pd.merge(data, pd.DataFrame({self.item_key:itemids, 'ItemIdx':self.itemidmap[itemids].values}), on=self.item_key, how='inner')
-        offset_sessions = self.init(data) # this is a list
+        offset_sessions = self.init(data) # this is a list: denoting an accumulative session length
+        # eg.: [0, 5, 20, 45, 78,...] (it is accumulative session len seperated by different sessions)
         print('fitting model...')
         for epoch in xrange(self.n_epochs):
             epoch_cost = []
+            # state is memory of each cell (a)
             state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in xrange(self.layers)]
-            session_idx_arr = np.arange(len(offset_sessions)-1) # array([0,1,2,3,4,..., num_sessions])
-            iters = np.arange(self.batch_size) # array([0,1,2,3,..., batch_size])
-            maxiter = iters.max()
-            # start and end is for indexing data.
+            session_idx_arr = np.arange(len(offset_sessions)-1) # array([0,1,2,3,4,..., num_sessions-1])
+            iters = np.arange(self.batch_size) # array([0,1,2,3,..., batch_size-1])
+            maxiter = iters.max() # =batch_size-1
+            # start and end is for indexing data. (start: start index of sessions in first batch; end: end index of sessions in first batch)
             start = offset_sessions[session_idx_arr[iters]]  # start is just an array
             end = offset_sessions[session_idx_arr[iters]+1]  # end is also an array
             finished = False
             while not finished:
                 minlen = (end-start).min()  # session with minimal timestep (minimal timestep)
-                out_idx = data.ItemIdx.values[start] # find start index of each session.
+                out_idx = data.ItemIdx.values[start] # first Item indexes (input to RNN/Embedding) of first few sessions
+
+                # This for loop would go through the all time steps of the GRU, limited by the shortest session. This is a truncated static_RNN
                 for i in range(minlen-1): # because the first index has already taken above.
                     in_idx = out_idx
+                    # next items in the same sessions
                     out_idx = data.ItemIdx.values[start+i+1] # this makes sure that all of these are in same session
 
                     # prepare inputs, targeted outputs and hidden states
                     fetches = [self.cost, self.final_state, self.global_step, self.lr, self.train_op]
-                    feed_dict = {self.X: in_idx, self.Y: out_idx}
+                    feed_dict = {self.X: in_idx, self.Y: out_idx} # X: input to the RNN cell. Y: output of the RNN cell.
+
+                    # this expend the feed_dict with one more key and value pair
+                    # self.state = [tf.placeholder(tf.float32, [self.batch_size, self.rnn_size], name='rnn_state') for _ in xrange(self.layers)]
                     for j in xrange(self.layers):
-                        feed_dict[self.state[j]] = state[j]
+                        feed_dict[self.state[j]] = state[j]  # state: a with size (n_a, m)
+                    # so feed_dict={self.X: , self.Y: , self.state: }
+                    # self.state is a whole thing, [j] is just filling values
 
                     cost, state, step, lr, _ = self.sess.run(fetches, feed_dict)
                     epoch_cost.append(cost)
@@ -214,15 +230,23 @@ class GRU4Rec:
                     if step == 1 or step % self.decay_steps == 0:
                         avgc = np.mean(epoch_cost)
                         print('Epoch {}\tStep {}\tlr: {:.6f}\tloss: {:.6f}'.format(epoch, step, lr, avgc))
-                start = start+minlen-1
-                mask = np.arange(len(iters))[(end-start)<=1]
+
+                ####################################################################
+                # Updata start
+                start = start+minlen-1 # end index of trained item for each session
+                # mask here
+                mask = np.arange(len(iters))[(end-start)<=1] # index is the ones consumed all timesteps for the session
+                # this is checking how many sessions it fully consumed
                 for idx in mask:
                     maxiter += 1
-                    if maxiter >= len(offset_sessions)-1:
+                    # need to check boundary condition: what would happen if maxiter > ...
+                    if maxiter >= len(offset_sessions)-1: # len(offset_sessions)=num_sessions+1
                         finished = True
                         break
                     iters[idx] = maxiter
+                    # inserting values for those early stoped short session
                     start[idx] = offset_sessions[session_idx_arr[maxiter]]
+                    # Updata end
                     end[idx] = offset_sessions[session_idx_arr[maxiter]+1]
                 if len(mask) and self.reset_after_session:
                     for i in xrange(self.layers):
