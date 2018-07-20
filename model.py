@@ -11,7 +11,7 @@ import numpy as np
 
 class GRU4Rec:
 
-    def __init__(self, sess, args):
+    def __init__(self, sess, args): # args is Class with attributes
         self.sess = sess
         self.is_training = args.is_training
 
@@ -75,7 +75,7 @@ class GRU4Rec:
             return
 
         # use self.predict_state to hold hidden states during prediction.
-        self.predict_state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in xrange(self.layers)]
+        self.predict_state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in range(self.layers)]
         ckpt = tf.train.get_checkpoint_state(self.checkpoint_dir)
         if ckpt and ckpt.model_checkpoint_path:
             self.saver.restore(sess, '{}/gru-model-{}'.format(self.checkpoint_dir, args.test_model))
@@ -110,7 +110,7 @@ class GRU4Rec:
 
         self.X = tf.placeholder(tf.int32, [self.batch_size], name='input')
         self.Y = tf.placeholder(tf.int32, [self.batch_size], name='output')
-        self.state = [tf.placeholder(tf.float32, [self.batch_size, self.rnn_size], name='rnn_state') for _ in xrange(self.layers)]
+        self.state = [tf.placeholder(tf.float32, [self.batch_size, self.rnn_size], name='rnn_state') for _ in range(self.layers)]
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
 
         with tf.variable_scope('gru_layer'):
@@ -120,7 +120,10 @@ class GRU4Rec:
             else:
                 initializer = tf.random_uniform_initializer(minval=-sigma, maxval=sigma)
 
-            # [FIXME] Am I looking at LSTM to change GRU?... fuck!
+            # [FIXME]
+            # 1. Fix embedding, W, b size.
+            # 2. A more flexible MultiRNNCell
+            # 3. Is this the only way to change memory of the cell?
             # here embedding layer dont have to be same as rnn_size. It can be arbitrary. There's no bug here. but it is not correct
             embedding = tf.get_variable('embedding', [self.n_items, self.rnn_size], initializer=initializer) # (n_items, dim_feat)
             # this guy is really doing softmax... not sampled one...
@@ -129,9 +132,10 @@ class GRU4Rec:
 
             cell = rnn_cell.GRUCell(self.rnn_size, activation=self.hidden_act)
             drop_cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.dropout_p_hidden)
+            # here, we can used different number of neurons for different RNN layer. Below way is not flexible
             stacked_cell = rnn_cell.MultiRNNCell([drop_cell] * self.layers)
 
-            inputs = tf.nn.embedding_lookup(embedding, self.X)
+            inputs = tf.nn.embedding_lookup(embedding, self.X) # self.X = in_idx
             output, state = stacked_cell(inputs, tuple(self.state))
             self.final_state = state
 
@@ -174,7 +178,7 @@ class GRU4Rec:
         self.train_op = optimizer.apply_gradients(capped_gvs, global_step=self.global_step)
 
     def init(self, data):
-        data.sort([self.session_key, self.time_key], inplace=True)
+        data.sort_values([self.session_key, self.time_key], inplace=True)
         offset_sessions = np.zeros(data[self.session_key].nunique()+1, dtype=np.int32)
         offset_sessions[1:] = data.groupby(self.session_key).size().cumsum() # num_sessions=len(offset_sessions)-1
         return offset_sessions
@@ -187,18 +191,23 @@ class GRU4Rec:
         # append an item_id column to data
         data = pd.merge(data, pd.DataFrame({self.item_key:itemids, 'ItemIdx':self.itemidmap[itemids].values}), on=self.item_key, how='inner')
         offset_sessions = self.init(data) # this is a list: denoting an accumulative session length
-        # eg.: [0, 5, 20, 45, 78,...] (it is accumulative session len seperated by different sessions)
+        # eg.: [0, 5, 20, 45, 78,...] (it is accumulative session len/index seperated by different sessions)
         print('fitting model...')
-        for epoch in xrange(self.n_epochs):
+        for epoch in range(self.n_epochs):
             epoch_cost = []
             # state is memory of each cell (a)
-            state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in xrange(self.layers)]
+            state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in range(self.layers)]
             session_idx_arr = np.arange(len(offset_sessions)-1) # array([0,1,2,3,4,..., num_sessions-1])
             iters = np.arange(self.batch_size) # array([0,1,2,3,..., batch_size-1])
             maxiter = iters.max() # =batch_size-1
             # start and end is for indexing data. (start: start index of sessions in first batch; end: end index of sessions in first batch)
-            start = offset_sessions[session_idx_arr[iters]]  # start is just an array
-            end = offset_sessions[session_idx_arr[iters]+1]  # end is also an array
+            '''
+            offset: [0, 5, 20, 45, 78, ...]
+            start:  offset[0, 1, 2, 3, 4, 5, ..., batch-1]
+            end:    offset[1, 2, 3, 4, 5, 6, ..., batch]
+            '''
+            start = offset_sessions[session_idx_arr[iters]]  # start is just an array: start index of coming session
+            end = offset_sessions[session_idx_arr[iters]+1]  # end is also an array: start index of next session
             finished = False
             while not finished:
                 minlen = (end-start).min()  # session with minimal timestep (minimal timestep)
@@ -215,8 +224,8 @@ class GRU4Rec:
                     feed_dict = {self.X: in_idx, self.Y: out_idx} # X: input to the RNN cell. Y: output of the RNN cell.
 
                     # this expend the feed_dict with one more key and value pair
-                    # self.state = [tf.placeholder(tf.float32, [self.batch_size, self.rnn_size], name='rnn_state') for _ in xrange(self.layers)]
-                    for j in xrange(self.layers):
+                    # self.state = [tf.placeholder(tf.float32, [self.batch_size, self.rnn_size], name='rnn_state') for _ in range(self.layers)]
+                    for j in range(self.layers):
                         feed_dict[self.state[j]] = state[j]  # state: a with size (n_a, m)
                     # so feed_dict={self.X: , self.Y: , self.state: }
                     # self.state is a whole thing, [j] is just filling values
@@ -235,23 +244,23 @@ class GRU4Rec:
                 # Updata start
                 start = start+minlen-1 # end index of trained item for each session
                 # mask here
-                mask = np.arange(len(iters))[(end-start)<=1] # index is the ones consumed all timesteps for the session
+                mask = np.arange(len(iters))[(end-start)<=1] # index is the ones (in the batch) consumed all timesteps for the session
                 # this is checking how many sessions it fully consumed
                 for idx in mask:
                     maxiter += 1
-                    # need to check boundary condition: what would happen if maxiter > ...
+                    # 这个是对的, 最初的batch就包含了num_batch个session.
                     if maxiter >= len(offset_sessions)-1: # len(offset_sessions)=num_sessions+1
                         finished = True
                         break
                     iters[idx] = maxiter
                     # inserting values for those early stoped short session
-                    start[idx] = offset_sessions[session_idx_arr[maxiter]]
+                    start[idx] = offset_sessions[session_idx_arr[maxiter]] # 先跑完当前session的先换到新的session
                     # Updata end
                     end[idx] = offset_sessions[session_idx_arr[maxiter]+1]
 
                 # this step is key! rnn关键在于是否保留memory, 除非memory清0，不然还算是一个sequence.
                 if len(mask) and self.reset_after_session:
-                    for i in xrange(self.layers):
+                    for i in range(self.layers):
                         state[i][mask] = 0
 
             avgc = np.mean(epoch_cost)
@@ -292,14 +301,14 @@ class GRU4Rec:
 
         session_change = np.arange(batch)[session_ids != self.current_session]
         if len(session_change) > 0: # change internal states with session changes
-            for i in xrange(self.layers):
+            for i in range(self.layers):
                 self.predict_state[i][session_change] = 0.0
             self.current_session=session_ids.copy()
 
         in_idxs = itemidmap[input_item_ids]
         fetches = [self.yhat, self.final_state]
         feed_dict = {self.X: in_idxs}
-        for i in xrange(self.layers):
+        for i in range(self.layers):
             feed_dict[self.state[i]] = self.predict_state[i]
         preds, self.predict_state = self.sess.run(fetches, feed_dict)
         preds = np.asarray(preds).T

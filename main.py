@@ -12,16 +12,36 @@ import argparse
 import model
 import evaluation
 
-PATH_TO_TRAIN = '/PATH/TO/rsc15_train_full.txt'
-PATH_TO_TEST = '/PATH/TO/rsc15_test.txt'
+PATH_TO_TRAIN = './data/rsc15_train_full.txt'
+PATH_TO_TEST = './data/rsc15_test.txt'
 
-class Args():
+'''
+rsc15_train_full.txt:
+-------------------------------
+SessionId	ItemId	Time
+1	214536502	1396864269.277
+1	214536500	1396864449.868
+1	214536506	1396864486.998
+-------------------------------
+
+rsc15_test.txt:
+-------------------------------
+SessionId	ItemId	Time
+11265009	214586805	1412000273.195
+11265009	214509260	1412000328.756
+11265017	214857547	1412014260.436
+-------------------------------
+'''
+
+
+class Args(object):
+    # Defining attributes of Class, not Instances.
     is_training = False
     layers = 1
-    rnn_size = 100
+    rnn_size = 100 # RNN Neurons
     n_epochs = 3
     batch_size = 50
-    dropout_p_hidden=1
+    dropout_p_hidden=1 # prob of keep
     learning_rate = 0.001
     decay = 0.96
     decay_steps = 1e4
@@ -51,7 +71,7 @@ def parseArgs():
     parser.add_argument('--final_act', default='softmax', type=str)
     parser.add_argument('--loss', default='cross-entropy', type=str)
     parser.add_argument('--dropout', default='0.5', type=float)
-    
+
     return parser.parse_args()
 
 
@@ -59,7 +79,8 @@ if __name__ == '__main__':
     command_line = parseArgs()
     data = pd.read_csv(PATH_TO_TRAIN, sep='\t', dtype={'ItemId': np.int64})
     valid = pd.read_csv(PATH_TO_TEST, sep='\t', dtype={'ItemId': np.int64})
-    args = Args()
+    args = Args() # args is the Class.
+    # Below is re-assigning attributes of
     args.n_items = len(data['ItemId'].unique())
     args.layers = command_line.layer
     args.rnn_size = command_line.size
@@ -77,6 +98,7 @@ if __name__ == '__main__':
     gpu_config = tf.ConfigProto()
     gpu_config.gpu_options.allow_growth = True
     with tf.Session(config=gpu_config) as sess:
+        # args is a Class with attributes:
         gru = model.GRU4Rec(sess, args)
         if args.is_training:
             gru.fit(data)
