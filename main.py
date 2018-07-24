@@ -77,6 +77,7 @@ def parseArgs():
 
 if __name__ == '__main__':
     command_line = parseArgs()
+    # files are actually .txt
     data = pd.read_csv(PATH_TO_TRAIN, sep='\t', dtype={'ItemId': np.int64})
     valid = pd.read_csv(PATH_TO_TEST, sep='\t', dtype={'ItemId': np.int64})
     args = Args() # args is the Class.
