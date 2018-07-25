@@ -130,13 +130,16 @@ class GRU4Rec:
             softmax_W = tf.get_variable('softmax_w', [self.n_items, self.rnn_size], initializer=initializer) # n_items??... wrong!!! (n_y, rnn_size)
             softmax_b = tf.get_variable('softmax_b', [self.n_items], initializer=tf.constant_initializer(0.0)) # (n_y)
 
+            '''To fully understand this part, you need to look through the tensorflow source code (check notes on evernote)'''
+            # memory and output of GRU are same.
             cell = rnn_cell.GRUCell(self.rnn_size, activation=self.hidden_act)
             drop_cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.dropout_p_hidden)
             # here, we can used different number of neurons for different RNN layer. Below way is not flexible
-            stacked_cell = rnn_cell.MultiRNNCell([drop_cell] * self.layers)
+            stacked_cell = rnn_cell.MultiRNNCell([drop_cell] * self.layers) # here is __init__()
 
             inputs = tf.nn.embedding_lookup(embedding, self.X) # self.X = in_idx
-            output, state = stacked_cell(inputs, tuple(self.state))
+            output, state = stacked_cell(inputs, tuple(self.state)) # here is call()
+            # In this case, state is memory and output of GRU Cells.
             self.final_state = state
 
         if self.is_training:
