@@ -95,6 +95,7 @@ class GRU4Rec:
         return tf.nn.sigmoid(X)
 
     ############################LOSS FUNCTIONS######################
+    # FIXME(Huafeng Sheng): All these Activation Looks Wrong
     def cross_entropy(self, yhat):
         return tf.reduce_mean(-tf.log(tf.diag_part(yhat)+1e-24))
     def bpr(self, yhat):
@@ -152,14 +153,16 @@ class GRU4Rec:
             sampled_W = tf.nn.embedding_lookup(softmax_W, self.Y)
             sampled_b = tf.nn.embedding_lookup(softmax_b, self.Y)
             logits = tf.matmul(output, sampled_W, transpose_b=True) + sampled_b
+            # usually we don't need to calculate the activation by ourself... looks strange here. Maybe this is only for generalization purpose.
             self.yhat = self.final_activation(logits)
             self.cost = self.loss_function(self.yhat)
         else:
+            # This is doing softmax over all available items... looks expensive. Is this ok?
             logits = tf.matmul(output, softmax_W, transpose_b=True) + softmax_b
             self.yhat = self.final_activation(logits)
 
-        if not self.is_training:
-            return
+        # if not self.is_training:
+        #     return
 
         self.lr = tf.maximum(1e-5,tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps, self.decay, staircase=True))
 
@@ -198,7 +201,7 @@ class GRU4Rec:
         print('fitting model...')
         for epoch in range(self.n_epochs):
             epoch_cost = []
-            # state is memory of each cell (a)
+            # state is Memory/Output of each GRU cell (a)
             state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in range(self.layers)]
             session_idx_arr = np.arange(len(offset_sessions)-1) # array([0,1,2,3,4,..., num_sessions-1])
             iters = np.arange(self.batch_size) # array([0,1,2,3,..., batch_size-1])
@@ -225,6 +228,7 @@ class GRU4Rec:
                     # prepare inputs, targeted outputs and hidden states
                     fetches = [self.cost, self.final_state, self.global_step, self.lr, self.train_op]
                     feed_dict = {self.X: in_idx, self.Y: out_idx} # X: input to the RNN cell. Y: output of the RNN cell.
+                    # Y is always the next item index of X. (Prediction)
 
                     # this expend the feed_dict with one more key and value pair
                     # self.state = [tf.placeholder(tf.float32, [self.batch_size, self.rnn_size], name='rnn_state') for _ in range(self.layers)]
