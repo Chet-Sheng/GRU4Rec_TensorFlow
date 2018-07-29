@@ -98,6 +98,7 @@ class GRU4Rec:
     # FIXME(Huafeng Sheng): All these Activation Looks Wrong
     def cross_entropy(self, yhat):
         return tf.reduce_mean(-tf.log(tf.diag_part(yhat)+1e-24))
+        # WTF is this cross-entropy???
     def bpr(self, yhat):
         yhatT = tf.transpose(yhat)
         return tf.reduce_mean(-tf.log(tf.nn.sigmoid(tf.diag_part(yhat)-yhatT)))
@@ -150,12 +151,22 @@ class GRU4Rec:
             How is NCE Loss?
             '''
             #[HACK] is this efficient? will softmax_W all be calculated?
-            sampled_W = tf.nn.embedding_lookup(softmax_W, self.Y)
-            sampled_b = tf.nn.embedding_lookup(softmax_b, self.Y)
+            # sampled_W = tf.nn.embedding_lookup(softmax_W, self.Y)
+            # sampled_b = tf.nn.embedding_lookup(softmax_b, self.Y)
+            # logits = tf.matmul(output, sampled_W, transpose_b=True) + sampled_b
+
+            true_W = tf.nn.embedding_lookup(softmax_W, self.Y)
+            true_b = tf.nn.embedding_lookup(softmax_b, self.Y)
+
+            sampled_ids = self.Y[]
+
             logits = tf.matmul(output, sampled_W, transpose_b=True) + sampled_b
             # usually we don't need to calculate the activation by ourself... looks strange here. Maybe this is only for generalization purpose.
-            self.yhat = self.final_activation(logits)
-            self.cost = self.loss_function(self.yhat)
+
+            # 这里重写:
+            '''yhat不用定义吧？'''
+            # self.yhat = self.final_activation(logits)
+            # self.cost = self.loss_function(self.yhat)
         else:
             # This is doing softmax over all available items... looks expensive. Is this ok?
             logits = tf.matmul(output, softmax_W, transpose_b=True) + softmax_b
@@ -182,6 +193,7 @@ class GRU4Rec:
         else:
             capped_gvs = gvs
         self.train_op = optimizer.apply_gradients(capped_gvs, global_step=self.global_step)
+        # 没有写.minimizes 这样还对么。。。
 
     def init(self, data):
         data.sort_values([self.session_key, self.time_key], inplace=True)
